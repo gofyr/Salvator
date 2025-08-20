@@ -1,0 +1,110 @@
+#=====================================
+# Global
+#=====================================
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.orig
+
+# Environment/config (do not commit secrets)
+.env
+.env.*
+*.local
+
+# IDE/editor
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+
+#=====================================
+# Flutter / Dart
+#=====================================
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub/
+.pub-cache/
+**/doc/api/
+
+# Project build outputs (Flutter builds under many platforms)
+**/build/
+
+#=====================================
+# Android (Gradle)
+#=====================================
+**/.gradle/
+**/.cxx/
+**/captures/
+**/local.properties
+**/key.properties
+**/*.jks
+**/*.keystore
+**/*.iml
+
+#=====================================
+# iOS / macOS (CocoaPods & Xcode)
+#=====================================
+**/Pods/
+**/.symlinks/
+**/DerivedData/
+**/*.xcworkspace/xcuserdata/
+**/*.xcuserdata/
+**/*.moved-aside
+
+# Flutter iOS/macOS ephemeral/generated
+**/Flutter/ephemeral/
+**/Flutter/flutter_export_environment.sh
+**/Flutter/App.framework
+**/Flutter/Flutter.framework
+**/Flutter/Flutter.podspec
+**/ServiceDefinitions.json
+
+#=====================================
+# Windows
+#=====================================
+**/windows/runner/Debug/
+**/windows/runner/Release/
+**/windows/flutter/ephemeral/
+
+#=====================================
+# Linux
+#=====================================
+**/linux/flutter/ephemeral/
+
+#=====================================
+# Web
+#=====================================
+# (Flutter web outputs are under build/ which is already ignored)
+
+#=====================================
+# Go (server)
+#=====================================
+# Common binary/artifact patterns
+**/*.exe
+**/*.exe~
+**/*.dll
+**/*.so
+**/*.dylib
+**/*.test
+**/*.out
+
+# Coverage
+coverage.out
+*.coverprofile
+
+# Local build/dist dirs (if used)
+bin/
+dist/
+
+# Known built binary in this repo
+/server/server
+
+

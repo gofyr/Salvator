@@ -1,0 +1,28 @@
+# Sample configuration for server-monitor
+listen_address: ":8443"
+data_dir: "/var/lib/server-monitor"
+tls_cert_path: "/etc/server-monitor/tls/server.crt"
+tls_key_path: "/etc/server-monitor/tls/server.key"
+
+# Optional mTLS
+client_ca_path: "/etc/server-monitor/tls/client-ca.pem"
+require_client_ca: false
+
+# Auth
+username: "admin"
+# bcrypt hash of password "admin": override in production
+password_hash: ""
+jwt_secret: ""
+access_ttl: "15m"
+refresh_ttl: "168h"
+
+# Allow only these networks (optional)
+allowed_cidrs:
+  - "127.0.0.1/32"
+  - "10.0.0.0/8"
+
+# Client key to restrict requests to official app
+client_key: "changeme-client-key"
+
+
+
