@@ -14,7 +14,7 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  late StreamSubscription _sub;
+  StreamSubscription? _sub;
   late String _currentHost;
   final List<FlSpot> _cpu = [];
   final List<FlSpot> _mem = [];
@@ -23,7 +23,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final List<FlSpot> _diskR = [];
   final List<FlSpot> _diskW = [];
   int _t = 0;
-  double _intervalSec = 1.0;
+  double _intervalSec = 2.0; // server streams every 2s
   num? _lastNetIn;
   num? _lastNetOut;
   num? _lastDiskR;
@@ -31,11 +31,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<_LoginEntry> _logins = [];
   List<_ContainerEntry> _containers = [];
   bool _loadingLists = false;
+  Timer? _reconnectTimer;
+  bool _waitingForMetrics = true;
+  Timer? _metricsWaitTimer;
 
   @override
   void initState() {
     super.initState();
     _currentHost = widget.host;
+    _waitingForMetrics = true;
+    _metricsWaitTimer?.cancel();
+    _metricsWaitTimer = Timer(const Duration(seconds: 6), () {
+      if (!mounted) return;
+      if (_waitingForMetrics) {
+        setState(() {
+          _waitingForMetrics = false;
+        });
+      }
+    });
+    _loadInitialMetrics();
     _startSse();
     _loadLists();
   }
@@ -56,52 +70,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
       accessToken: auth.accessToken,
       clientKey: auth.clientKey,
     );
-    _sub = sse.connect().listen((map) {
-      final cpu = (map['cpu_percent'] as num?)?.toDouble() ?? 0;
-      final memUsed = (map['memory_used'] as num?)?.toDouble() ?? 0;
-      final memTotal = (map['memory_total'] as num?)?.toDouble() ?? 1;
-      final memPct = (memUsed / memTotal) * 100.0;
-      final nIn = (map['net_bytes_in'] as num?) ?? 0;
-      final nOut = (map['net_bytes_out'] as num?) ?? 0;
-      final dR = (map['disk_read_bytes'] as num?) ?? 0;
-      final dW = (map['disk_write_bytes'] as num?) ?? 0;
-      final netInRate = _lastNetIn == null
-          ? 0.0
-          : ((nIn - _lastNetIn!) / _intervalSec) / 1024.0;
-      final netOutRate = _lastNetOut == null
-          ? 0.0
-          : ((nOut - _lastNetOut!) / _intervalSec) / 1024.0;
-      final diskRRate = _lastDiskR == null
-          ? 0.0
-          : ((dR - _lastDiskR!) / _intervalSec) / 1024.0;
-      final diskWRate = _lastDiskW == null
-          ? 0.0
-          : ((dW - _lastDiskW!) / _intervalSec) / 1024.0;
-      setState(() {
-        _cpu.add(FlSpot(_t.toDouble(), cpu));
-        _mem.add(FlSpot(_t.toDouble(), memPct));
-        _netIn.add(FlSpot(_t.toDouble(), netInRate.toDouble()));
-        _netOut.add(FlSpot(_t.toDouble(), netOutRate.toDouble()));
-        _diskR.add(FlSpot(_t.toDouble(), diskRRate.toDouble()));
-        _diskW.add(FlSpot(_t.toDouble(), diskWRate.toDouble()));
-        if (_cpu.length > 60) _cpu.removeAt(0);
-        if (_mem.length > 60) _mem.removeAt(0);
-        if (_netIn.length > 60) _netIn.removeAt(0);
-        if (_netOut.length > 60) _netOut.removeAt(0);
-        if (_diskR.length > 60) _diskR.removeAt(0);
-        if (_diskW.length > 60) _diskW.removeAt(0);
-        _t++;
-        _lastNetIn = nIn;
-        _lastNetOut = nOut;
-        _lastDiskR = dR;
-        _lastDiskW = dW;
-      });
-    });
+    _sub?.cancel();
+    _sub = sse.connect().listen(
+      (map) {
+        _addMetricsPointFromMap(map);
+      },
+      onError: (e, st) async {
+        // Attempt token refresh on auth errors, then schedule reconnect
+        try {
+          final msg = e.toString();
+          if (msg.contains('401')) {
+            await auth.refresh();
+          }
+        } catch (_) {}
+        _scheduleReconnect();
+      },
+      onDone: () {
+        _scheduleReconnect();
+      },
+    );
   }
 
   @override
   void dispose() {
-    _sub.cancel();
+    _reconnectTimer?.cancel();
+    _metricsWaitTimer?.cancel();
+    _sub?.cancel();
     super.dispose();
   }
 
@@ -168,6 +162,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required List<Color> colors,
     double? fixedMaxY,
   }) {
+    final hasData = series.any((s) => s.isNotEmpty);
     final maxY = fixedMaxY ?? _computeDynamicMaxY(series);
     return Card(
       child: SizedBox(
@@ -203,28 +198,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 8),
               Expanded(
-                child: LineChart(
-                  LineChartData(
-                    gridData: const FlGridData(show: false),
-                    titlesData: const FlTitlesData(show: false),
-                    borderData: FlBorderData(show: false),
-                    lineBarsData: [
-                      for (
-                        int i = 0;
-                        i < series.length && i < colors.length;
-                        i++
-                      )
-                        LineChartBarData(
-                          spots: series[i],
-                          color: colors[i],
-                          dotData: const FlDotData(show: false),
-                          isCurved: true,
-                          barWidth: 2,
+                child: Stack(
+                  children: [
+                    if (!hasData)
+                      const Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                    ],
-                    minY: 0,
-                    maxY: maxY,
-                  ),
+                      )
+                    else
+                      LineChart(
+                        LineChartData(
+                          gridData: const FlGridData(show: false),
+                          titlesData: const FlTitlesData(show: false),
+                          borderData: FlBorderData(show: false),
+                          lineBarsData: [
+                            for (
+                              int i = 0;
+                              i < series.length && i < colors.length;
+                              i++
+                            )
+                              LineChartBarData(
+                                spots: series[i],
+                                color: colors[i],
+                                dotData: const FlDotData(show: false),
+                                isCurved: true,
+                                barWidth: 2,
+                              ),
+                          ],
+                          minY: 0,
+                          maxY: maxY,
+                        ),
+                      ),
+                    Positioned.fill(
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () {
+                            if (title.startsWith('CPU')) {
+                              Navigator.of(context).pushNamed('/cpu');
+                            } else if (title.startsWith('Network')) {
+                              Navigator.of(context).pushNamed('/network');
+                            } else if (title.startsWith('Disk')) {
+                              Navigator.of(context).pushNamed('/disk');
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -301,6 +325,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _refreshAll() async {
     _resetCharts();
+    setState(() {
+      _waitingForMetrics = true;
+    });
+    _metricsWaitTimer?.cancel();
+    _metricsWaitTimer = Timer(const Duration(seconds: 6), () {
+      if (!mounted) return;
+      if (_waitingForMetrics) {
+        setState(() {
+          _waitingForMetrics = false;
+        });
+      }
+    });
+    // Ensure spinner persists until data arrives; wait for initial metrics then SSE will continue
+    await _loadInitialMetrics();
     await _loadLists();
   }
 
@@ -321,13 +359,112 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _switchServer(String newHost) async {
-    await _sub.cancel();
+    _reconnectTimer?.cancel();
+    await _sub?.cancel();
     setState(() {
       _currentHost = newHost;
     });
     _resetCharts();
+    setState(() {
+      _waitingForMetrics = true;
+    });
+    _metricsWaitTimer?.cancel();
+    _metricsWaitTimer = Timer(const Duration(seconds: 6), () {
+      if (!mounted) return;
+      if (_waitingForMetrics) {
+        setState(() {
+          _waitingForMetrics = false;
+        });
+      }
+    });
+    await _loadInitialMetrics();
     _startSse();
     await _loadLists();
+  }
+
+  void _scheduleReconnect() {
+    if (!mounted) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      _startSse();
+    });
+  }
+
+  Future<void> _loadInitialMetrics() async {
+    try {
+      final auth = context.read<AuthService>();
+      final dio = auth.createDio();
+      final resp = await dio.get('/api/metrics');
+      if (resp.statusCode == 200 && resp.data is Map<String, dynamic>) {
+        final map = resp.data as Map<String, dynamic>;
+        setState(() {
+          final cpu = (map['cpu_percent'] as num?)?.toDouble() ?? 0;
+          final memUsed = (map['memory_used'] as num?)?.toDouble() ?? 0;
+          final memTotal = (map['memory_total'] as num?)?.toDouble() ?? 1;
+          final memPct = (memUsed / memTotal) * 100.0;
+          _lastNetIn = (map['net_bytes_in'] as num?) ?? 0;
+          _lastNetOut = (map['net_bytes_out'] as num?) ?? 0;
+          _lastDiskR = (map['disk_read_bytes'] as num?) ?? 0;
+          _lastDiskW = (map['disk_write_bytes'] as num?) ?? 0;
+          _cpu.add(FlSpot(_t.toDouble(), cpu));
+          _mem.add(FlSpot(_t.toDouble(), memPct));
+          _netIn.add(FlSpot(_t.toDouble(), 0));
+          _netOut.add(FlSpot(_t.toDouble(), 0));
+          _diskR.add(FlSpot(_t.toDouble(), 0));
+          _diskW.add(FlSpot(_t.toDouble(), 0));
+          _t++;
+          _waitingForMetrics = false;
+        });
+        _metricsWaitTimer?.cancel();
+      }
+    } catch (_) {
+      // ignore; SSE will populate shortly
+    }
+  }
+
+  void _addMetricsPointFromMap(Map<String, dynamic> map) {
+    final cpu = (map['cpu_percent'] as num?)?.toDouble() ?? 0;
+    final memUsed = (map['memory_used'] as num?)?.toDouble() ?? 0;
+    final memTotal = (map['memory_total'] as num?)?.toDouble() ?? 1;
+    final memPct = (memUsed / memTotal) * 100.0;
+    final nIn = (map['net_bytes_in'] as num?) ?? 0;
+    final nOut = (map['net_bytes_out'] as num?) ?? 0;
+    final dR = (map['disk_read_bytes'] as num?) ?? 0;
+    final dW = (map['disk_write_bytes'] as num?) ?? 0;
+    final netInRate = _lastNetIn == null
+        ? 0.0
+        : ((nIn - _lastNetIn!) / _intervalSec) / 1024.0;
+    final netOutRate = _lastNetOut == null
+        ? 0.0
+        : ((nOut - _lastNetOut!) / _intervalSec) / 1024.0;
+    final diskRRate = _lastDiskR == null
+        ? 0.0
+        : ((dR - _lastDiskR!) / _intervalSec) / 1024.0;
+    final diskWRate = _lastDiskW == null
+        ? 0.0
+        : ((dW - _lastDiskW!) / _intervalSec) / 1024.0;
+    setState(() {
+      _cpu.add(FlSpot(_t.toDouble(), cpu));
+      _mem.add(FlSpot(_t.toDouble(), memPct));
+      _netIn.add(FlSpot(_t.toDouble(), netInRate.toDouble()));
+      _netOut.add(FlSpot(_t.toDouble(), netOutRate.toDouble()));
+      _diskR.add(FlSpot(_t.toDouble(), diskRRate.toDouble()));
+      _diskW.add(FlSpot(_t.toDouble(), diskWRate.toDouble()));
+      if (_cpu.length > 60) _cpu.removeAt(0);
+      if (_mem.length > 60) _mem.removeAt(0);
+      if (_netIn.length > 60) _netIn.removeAt(0);
+      if (_netOut.length > 60) _netOut.removeAt(0);
+      if (_diskR.length > 60) _diskR.removeAt(0);
+      if (_diskW.length > 60) _diskW.removeAt(0);
+      _t++;
+      _lastNetIn = nIn;
+      _lastNetOut = nOut;
+      _lastDiskR = dR;
+      _lastDiskW = dW;
+      _waitingForMetrics = false;
+    });
+    _metricsWaitTimer?.cancel();
   }
 
   void _checkActiveHost() {

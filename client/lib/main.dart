@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/auth.dart';
 import 'screens/dashboard.dart';
-import 'package:network_info_plus/network_info_plus.dart';
 import 'screens/agents.dart';
+import 'screens/system_detail.dart';
+import 'screens/network_detail.dart';
+import 'screens/disk_detail.dart';
 
 void main() {
   HttpOverrides.global = _AllowSelfSigned();
@@ -46,6 +48,9 @@ class App extends StatelessWidget {
         routes: {
           '/': (_) => const _Root(),
           '/agents': (_) => const AgentsScreen(),
+          '/cpu': (_) => const SystemDetailScreen(),
+          '/network': (_) => const NetworkDetailScreen(),
+          '/disk': (_) => const DiskDetailScreen(),
         },
       ),
     );
@@ -117,7 +122,7 @@ class _ServersPageState extends State<_ServersPage> {
 }
 
 class _LoginPage extends StatefulWidget {
-  const _LoginPage({super.key});
+  const _LoginPage();
   @override
   State<_LoginPage> createState() => _LoginPageState();
 }
